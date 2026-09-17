@@ -11,6 +11,7 @@ const {
   EXECUTE,
 } = process.env;
 
+const CLIENT_NAME = "Alena";
 const LOGIN_URL = "https://panel.bilky.es/auth/login";
 const WORKSHIFT_URL =
   "https://panel.bilky.es/employee/hour-registration/hour-registration/show/ekzv7lndr9eqy5da";
@@ -228,6 +229,8 @@ async function readCardState(container) {
   const ficharButtons = container.getByText(/^(Fichar|Clock in|Clock out)$/i, { exact: true });
   const clockButtonCount = await ficharButtons.count();
   const clockButton = clockButtonCount === 1 ? ficharButtons.first() : null;
+  const morningNeedsButton = facts.length === 0 && clockButtonCount === 1;
+  const eveningNeedsButton = facts.length === 1 && clockButtonCount === 1;
 
   const signed = /\bFirmado\b/i.test(text) || /\bSigned\b/i.test(text);
   const pendingSignature = /Pendiente de firmar/i.test(text) || /Pending signature/i.test(text);
@@ -238,16 +241,16 @@ async function readCardState(container) {
     morning: {
       planned: plannedMorning,
       fact: facts[0] || null,
-      buttonExists: false,
-      buttonEnabled: false,
-      buttonId: null,
+      buttonExists: morningNeedsButton,
+      buttonEnabled: morningNeedsButton,
+      buttonId: morningNeedsButton ? 'text:Fichar' : null,
     },
     evening: {
       planned: plannedEvening,
       fact: facts[1] || null,
-      buttonExists: clockButtonCount === 1,
-      buttonEnabled: clockButtonCount === 1,
-      buttonId: clockButtonCount === 1 ? 'text:Fichar' : null,
+      buttonExists: eveningNeedsButton,
+      buttonEnabled: eveningNeedsButton,
+      buttonId: eveningNeedsButton ? 'text:Fichar' : null,
     },
     signed,
     signAvailable,
@@ -354,8 +357,9 @@ async function clock(page, state, mode) {
     button = cell.locator("a.clock").first();
     if (!(await button.count())) throw new Error(`${mode}: Clock in/out button does not exist`);
   } else {
-    if (mode !== "evening") throw new Error("Card-mode morning execution is not enabled yet");
-    if (!state.clockButton) throw new Error("evening: Fichar button is not uniquely available");
+    if (!side.buttonExists || !state.clockButton) {
+      throw new Error(`${mode}: Fichar button is not uniquely available`);
+    }
     button = state.clockButton;
   }
 
@@ -450,7 +454,7 @@ async function main() {
 
     if (ACTION === "morning") {
       const result = await clock(page, state, "morning");
-      await sendTelegram(`✅ Bilky ${displayDate(targetDate)}: УТРО. Факт: ${shortFact(result.fact)}`);
+      await sendTelegram(`✅ Bilky for ${CLIENT_NAME} ${displayDate(targetDate)}: Morning. Fact: ${shortFact(result.fact)}`);
       log("MORNING SUCCESS");
       return;
     }
@@ -458,9 +462,9 @@ async function main() {
     const result = await clock(page, state, "evening");
     const finalState = await signDay(page);
     const duration = dayDuration(finalState.morning.fact, finalState.evening.fact);
-    if (!duration) throw new Error("Unable to calculate DAY from morning/evening facts");
+    if (!duration) throw new Error("Unable to calculate Workday from morning/evening facts");
 
-    await sendTelegram(`✅ Bilky ${displayDate(targetDate)}: ВЕЧЕР. Факт: ${shortFact(result.fact)}, Signed. DAY ${duration}`);
+    await sendTelegram(`✅ Bilky for ${CLIENT_NAME} ${displayDate(targetDate)}: Evening. Fact: ${shortFact(result.fact)}, Signed. Workday ${duration}`);
     log("EVENING SUCCESS");
   } catch (error) {
     console.error(`FAILED: ${error.message}`);
@@ -468,9 +472,9 @@ async function main() {
       await page.screenshot({ path: "diagnostics/workshift-error.png", fullPage: true });
     } catch {}
 
-    const label = ACTION === "morning" ? "УТРО" : "ВЕЧЕР";
+    const label = ACTION === "morning" ? "Morning" : "Evening";
     try {
-      await sendTelegram(`❌ Bilky ${displayDate(targetDate)}: ${label}. ERROR: ${error.message}`);
+      await sendTelegram(`❌ Bilky for ${CLIENT_NAME} ${displayDate(targetDate)}: ${label}. ERROR: ${error.message}`);
     } catch (telegramError) {
       console.error(`Telegram error notification failed: ${telegramError.message}`);
     }
