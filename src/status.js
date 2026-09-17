@@ -9,6 +9,7 @@ const {
   REQUEST_CHAT_ID,
 } = process.env;
 
+const CLIENT_NAME = "Alena";
 const LOGIN_URL = "https://panel.bilky.es/auth/login";
 const WORKSHIFT_URL = "https://panel.bilky.es/employee/hour-registration/hour-registration/show/ekzv7lndr9eqy5da";
 const TIMEZONE = "Europe/Madrid";
@@ -308,11 +309,11 @@ function classifyDay(date, state, today, nowMinutes) {
     if (relation === 0 && nowMinutes <= 16 * 60 + 20) return { line: `🟡 ${label}: ${morning}, wait`, total: 0 };
     return { line: `❌ ${label}: ${morning}, ERROR: evening fact missing`, total: 0 };
   }
-  if (duration == null) return { line: `❌ ${label}: ${morning}, ${evening}, ERROR: invalid DAY interval`, total: 0 };
+  if (duration == null) return { line: `❌ ${label}: ${morning}, ${evening}, ERROR: invalid Workday interval`, total: 0 };
 
-  const day = formatDuration(duration);
-  if (!state.signed) return { line: `⚠️ ${label}: ${morning}, ${evening}, NOT SIGNED, DAY ${day}`, total: 0 };
-  return { line: `✅ ${label}: ${morning}, ${evening}, Signed, DAY ${day}`, total: duration };
+  const workday = formatDuration(duration);
+  if (!state.signed) return { line: `⚠️ ${label}: ${morning}, ${evening}, NOT SIGNED, Workday ${workday}`, total: 0 };
+  return { line: `✅ ${label}: ${morning}, ${evening}, Signed, Workday ${workday}`, total: duration };
 }
 
 async function main() {
@@ -338,12 +339,12 @@ async function main() {
       totalMinutes += classified.total;
     }
 
-    const report = [`📋 Bilky — ${ordinal(week)} week ${weekRangeLabel(monday, friday)}`, "", ...lines, "", `Total week = ${formatDuration(totalMinutes)}`].join("\n");
+    const report = [`📋 Bilky for ${CLIENT_NAME} — ${ordinal(week)} week ${weekRangeLabel(monday, friday)}`, "", ...lines, "", `Total week = ${formatDuration(totalMinutes)}`].join("\n");
     await sendTelegram(report);
     log("STATUS SUCCESS");
   } catch (error) {
     console.error(`STATUS FAILED: ${error.message}`);
-    await sendTelegram(`❌ Bilky STATUS. ERROR: ${error.message}`);
+    await sendTelegram(`❌ Bilky for ${CLIENT_NAME} STATUS. ERROR: ${error.message}`);
     throw error;
   } finally {
     await browser.close();
