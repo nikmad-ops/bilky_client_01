@@ -140,42 +140,125 @@ async function sendTelegram(message) {
   if (!response.ok) throw new Error(`Telegram failed: ${response.status} ${await response.text()}`);
 }
 
-function extractTime(text) {
-  const match = String(text || "").match(/\b\d{2}:\d{2}\b/);
-  return match ? match[0] : null;
-}
-
 function extractFactTime(value) {
   if (!value) return null;
   const match = value.match(/^\d{2}\/\d{2}\/\d{4}\s+(\d{2}:\d{2}:\d{2})$/);
   return match ? match[1] : null;
 }
 
-async function readShiftCell(cell) {
-  let planned = null;
-  const input = cell.locator("input.clockpicker").first();
-  if (await input.count()) planned = await input.inputValue();
-  else planned = extractTime(await cell.innerText());
+async function locateDayContainer(page, date) {
+  const legacy = page.locator(`#container_${date}`);
+  if ((await legacy.count()) > 0) {
+    try {
+      await legacy.waitFor({ state: "visible", timeout: 1500 });
+      return { locator: legacy, mode: "legacy" };
+    } catch {}
+  }
 
-  let fact = null;
-  const factIcon = cell.locator('i.fe-clock[data-original-title]').first();
-  if (await factIcon.count()) fact = extractFactTime(await factIcon.getAttribute("data-original-title"));
-  return { planned, fact };
+  const [, month, dayRaw] = date.split("-");
+  const day = String(Number(dayRaw));
+  const year = date.slice(0, 4);
+  const monthNames = {
+    "01": ["ENERO", "JANUARY"],
+    "02": ["FEBRERO", "FEBRUARY"],
+    "03": ["MARZO", "MARCH"],
+    "04": ["ABRIL", "APRIL"],
+    "05": ["MAYO", "MAY"],
+    "06": ["JUNIO", "JUNE"],
+    "07": ["JULIO", "JULY"],
+    "08": ["AGOSTO", "AUGUST"],
+    "09": ["SEPTIEMBRE", "SEPTEMBER"],
+    "10": ["OCTUBRE", "OCTOBER"],
+    "11": ["NOVIEMBRE", "NOVEMBER"],
+    "12": ["DICIEMBRE", "DECEMBER"],
+  }[month];
+
+  const attr = `data-bilky-status-day-${date}`;
+  const result = await page.evaluate(({ day, year, monthNames, attr }) => {
+    document.querySelectorAll(`[${attr}]`).forEach((el) => el.removeAttribute(attr));
+
+    const shiftLabels = [...document.querySelectorAll('body *')].filter((el) => {
+      const t = (el.textContent || '').trim();
+      return t === 'Primer turno' || t === 'First shift';
+    });
+
+    const matches = [];
+    for (const label of shiftLabels) {
+      let el = label.parentElement;
+      for (let depth = 0; el && depth < 10; depth += 1, el = el.parentElement) {
+        const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+        const hasYear = text.includes(year);
+        const hasMonth = monthNames.some((m) => text.toUpperCase().includes(m));
+        const hasDay = new RegExp(`(^|\\s)${day}(\\s|$)`).test(text);
+        const hasShift = /Primer turno|First shift/.test(text);
+        if (hasYear && hasMonth && hasDay && hasShift) {
+          matches.push(el);
+          break;
+        }
+      }
+    }
+
+    const unique = [...new Set(matches)];
+    if (unique.length === 1) unique[0].setAttribute(attr, 'true');
+    return unique.length;
+  }, { day, year, monthNames, attr });
+
+  if (result !== 1) return { locator: null, mode: "card", error: `day card matches=${result}` };
+  return { locator: page.locator(`[${attr}="true"]`), mode: "card" };
+}
+
+async function readLegacyState(container) {
+  const row = container.locator("tr").filter({ hasText: /First shift|Primer turno/ }).first();
+  if (!(await row.count())) return { exists: false, error: "shift row not found" };
+
+  const cells = row.locator("td.hr-container");
+  if ((await cells.count()) < 2) return { exists: false, error: "morning/evening cells not found" };
+
+  async function readCell(cell) {
+    let planned = null;
+    const input = cell.locator("input.clockpicker").first();
+    if (await input.count()) planned = await input.inputValue();
+
+    let fact = null;
+    const factIcon = cell.locator('i.fe-clock[data-original-title]').first();
+    if (await factIcon.count()) fact = extractFactTime(await factIcon.getAttribute("data-original-title"));
+    return { planned, fact };
+  }
+
+  const morning = await readCell(cells.nth(0));
+  const evening = await readCell(cells.nth(1));
+  const signed = (await container.locator(".badge-success").filter({ hasText: /Signed|Firmado/ }).count()) > 0;
+  return { exists: true, morning, evening, signed };
+}
+
+async function readCardState(container) {
+  const text = (await container.innerText()).replace(/\s+/g, ' ').trim();
+  const times = [...text.matchAll(/\b\d{2}:\d{2}(?::\d{2})?\b/g)].map((m) => m[0]);
+
+  const factIcons = container.locator('[data-original-title]');
+  const facts = [];
+  for (let i = 0; i < await factIcons.count(); i += 1) {
+    const raw = await factIcons.nth(i).getAttribute('data-original-title');
+    const fact = extractFactTime(raw);
+    if (fact) facts.push(fact);
+  }
+
+  return {
+    exists: true,
+    morning: { planned: times.find((t) => t.startsWith('08:00')) ? '08:00' : null, fact: facts[0] || null },
+    evening: { planned: times.find((t) => t.startsWith('16:00')) ? '16:00' : null, fact: facts[1] || null },
+    signed: /\bFirmado\b/i.test(text) || /\bSigned\b/i.test(text),
+  };
 }
 
 async function readDayState(page, date) {
-  const container = page.locator(`#container_${date}`);
-  if (!(await container.count())) return { exists: false, error: "day container not found" };
+  const located = await locateDayContainer(page, date);
+  if (!located.locator) return { exists: false, error: located.error || "day card not found" };
+
   try {
-    await container.waitFor({ state: "visible", timeout: 8000 });
-    const row = container.locator("tr").filter({ hasText: "First shift" }).first();
-    if (!(await row.count())) return { exists: false, error: "First shift row not found" };
-    const cells = row.locator("td.hr-container");
-    if ((await cells.count()) < 2) return { exists: false, error: "morning/evening cells not found" };
-    const morning = await readShiftCell(cells.nth(0));
-    const evening = await readShiftCell(cells.nth(1));
-    const signed = (await container.locator(".badge-success").filter({ hasText: "Signed" }).count()) > 0;
-    return { exists: true, morning, evening, signed };
+    await located.locator.waitFor({ state: "visible", timeout: 4000 });
+    if (located.mode === "legacy") return await readLegacyState(located.locator);
+    return await readCardState(located.locator);
   } catch (error) {
     return { exists: false, error: error.message };
   }
@@ -190,26 +273,31 @@ async function loginAndOpenWorkshift(page) {
   const submit = page.locator('button[type="submit"]').first();
   if (!(await submit.count())) throw new Error("Bilky login button not found");
   await submit.click();
+
   const deadline = Date.now() + 25000;
   while (Date.now() < deadline) {
     await page.waitForTimeout(1000);
     if (!page.url().includes("/auth/login")) break;
   }
   if (page.url().includes("/auth/login")) throw new Error("Bilky security verification/login did not clear within 25 seconds");
+
   await page.goto(WORKSHIFT_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
-  await page.waitForTimeout(1200);
+  await page.waitForTimeout(1500);
 }
 
 function classifyDay(date, state, today, nowMinutes) {
   const label = dayMonth(date);
   const relation = compareYmd(date, today);
+
   if (!state.exists) {
     if (relation > 0) return { line: `⚪ ${label}: wait`, total: 0 };
     return { line: `❌ ${label}: ERROR: ${state.error || "day data unavailable"}`, total: 0 };
   }
+
   const morning = shortTime(state.morning.fact);
   const evening = shortTime(state.evening.fact);
   const duration = durationMinutes(state.morning.fact, state.evening.fact);
+
   if (relation > 0) return { line: `⚪ ${label}: wait`, total: 0 };
   if (!morning && evening) return { line: `❌ ${label}: ERROR: morning fact missing; evening=${evening}`, total: 0 };
   if (!morning) {
@@ -221,6 +309,7 @@ function classifyDay(date, state, today, nowMinutes) {
     return { line: `❌ ${label}: ${morning}, ERROR: evening fact missing`, total: 0 };
   }
   if (duration == null) return { line: `❌ ${label}: ${morning}, ${evening}, ERROR: invalid DAY interval`, total: 0 };
+
   const day = formatDuration(duration);
   if (!state.signed) return { line: `⚠️ ${label}: ${morning}, ${evening}, NOT SIGNED, DAY ${day}`, total: 0 };
   return { line: `✅ ${label}: ${morning}, ${evening}, Signed, DAY ${day}`, total: duration };
@@ -241,12 +330,14 @@ async function main() {
     await loginAndOpenWorkshift(page);
     const lines = [];
     let totalMinutes = 0;
+
     for (const date of dates) {
       const state = await readDayState(page, date);
       const classified = classifyDay(date, state, today, nowMinutes);
       lines.push(classified.line);
       totalMinutes += classified.total;
     }
+
     const report = [`📋 Bilky — ${ordinal(week)} week ${weekRangeLabel(monday, friday)}`, "", ...lines, "", `Total week = ${formatDuration(totalMinutes)}`].join("\n");
     await sendTelegram(report);
     log("STATUS SUCCESS");
