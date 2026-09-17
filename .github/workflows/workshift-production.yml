@@ -10,6 +10,7 @@ on:
         options:
           - morning
           - evening
+
       execute:
         description: 'Allow Bilky click operations'
         required: true
@@ -98,4 +99,6 @@ jobs:
           BROWSERLESS_TOKEN: ${{ secrets.BROWSERLESS_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ADMIN_TELEGRAM_BOT_TOKEN: ${{ secrets.ADMIN_TELEGRAM_BOT_TOKEN }}
+          ADMIN_TELEGRAM_CHAT_ID: ${{ secrets.ADMIN_TELEGRAM_CHAT_ID }}
         run: npm run workshift
