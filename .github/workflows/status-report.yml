@@ -18,16 +18,26 @@ jobs:
         id: auth
         env:
           REQUEST_CHAT_ID: ${{ inputs.chat_id }}
-          AUTHORIZED_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CLIENT_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_TELEGRAM_CHAT_ID }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${REQUEST_CHAT_ID}" != "${AUTHORIZED_CHAT_ID}" ]; then
-            echo "Unauthorized Telegram chat_id."
-            echo "allowed=false" >> "$GITHUB_OUTPUT"
+
+          if [ "${REQUEST_CHAT_ID}" = "${CLIENT_CHAT_ID}" ]; then
+            echo "allowed=true" >> "$GITHUB_OUTPUT"
+            echo "recipient=client" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "allowed=true" >> "$GITHUB_OUTPUT"
+
+          if [ "${REQUEST_CHAT_ID}" = "${ADMIN_CHAT_ID}" ]; then
+            echo "allowed=true" >> "$GITHUB_OUTPUT"
+            echo "recipient=admin" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Unauthorized Telegram chat_id."
+          echo "allowed=false" >> "$GITHUB_OUTPUT"
 
       - name: Checkout repository
         if: steps.auth.outputs.allowed == 'true'
@@ -47,9 +57,12 @@ jobs:
         if: steps.auth.outputs.allowed == 'true'
         env:
           REQUEST_CHAT_ID: ${{ inputs.chat_id }}
+          REQUEST_RECIPIENT: ${{ steps.auth.outputs.recipient }}
           BILKY_NIF: ${{ secrets.BILKY_NIF }}
           BILKY_PASSWORD: ${{ secrets.BILKY_PASSWORD }}
           BROWSERLESS_TOKEN: ${{ secrets.BROWSERLESS_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ADMIN_TELEGRAM_BOT_TOKEN: ${{ secrets.ADMIN_TELEGRAM_BOT_TOKEN }}
+          ADMIN_TELEGRAM_CHAT_ID: ${{ secrets.ADMIN_TELEGRAM_CHAT_ID }}
         run: npm run status
