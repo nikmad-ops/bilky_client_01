@@ -169,19 +169,17 @@ async function locateDayContainer(page, date) {
     `#container_${date}`
   );
 
-  if ((await legacy.count()) > 0) {
-    try {
-      await legacy.waitFor({
-        state: "visible",
-        timeout: 3000,
-      });
+  try {
+    await legacy.waitFor({
+      state: "visible",
+      timeout: 8000,
+    });
 
-      return {
-        locator: legacy,
-        mode: "legacy",
-      };
-    } catch {}
-  }
+    return {
+      locator: legacy,
+      mode: "legacy",
+    };
+  } catch {}
 
   const [, month, dayRaw] = date.split("-");
   const day = String(Number(dayRaw));
@@ -264,16 +262,11 @@ async function locateDayContainer(page, date) {
               text
             );
 
-          const hasExpectedTimes =
-            text.includes("08:00") &&
-            text.includes("16:00");
-
           if (
             hasYear &&
             hasMonth &&
             hasDay &&
-            hasShift &&
-            hasExpectedTimes
+            hasShift
           ) {
             matches.push(el);
             break;
