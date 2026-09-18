@@ -47,8 +47,7 @@ function getMadridDate() {
     day: "2-digit",
   }).formatToParts(new Date());
 
-  const value = (type) =>
-    parts.find((part) => part.type === type)?.value;
+  const value = (type) => parts.find((part) => part.type === type)?.value;
 
   return `${value("year")}-${value("month")}-${value("day")}`;
 }
@@ -86,36 +85,21 @@ function dayDuration(morningFact, eveningFact) {
   const start = minutesFromTime(morningFact);
   const end = minutesFromTime(eveningFact);
 
-  if (
-    start == null ||
-    end == null ||
-    end < start
-  ) {
-    return null;
-  }
+  if (start == null || end == null || end < start) return null;
 
   return formatDuration(end - start);
 }
 
 function log(message) {
-  console.log(
-    `[${new Date().toISOString()}] ${message}`
-  );
+  console.log(`[${new Date().toISOString()}] ${message}`);
 }
 
-async function sendTelegramTo(
-  botToken,
-  chatId,
-  message,
-  label
-) {
+async function sendTelegramTo(botToken, chatId, message, label) {
   const response = await fetch(
     `https://api.telegram.org/bot${botToken}/sendMessage`,
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chat_id: chatId,
         text: message,
@@ -147,10 +131,7 @@ async function sendTelegram(message) {
 }
 
 function extractTime(text) {
-  const match = String(text || "").match(
-    /\b\d{2}:\d{2}\b/
-  );
-
+  const match = String(text || "").match(/\b\d{2}:\d{2}\b/);
   return match ? match[0] : null;
 }
 
@@ -164,252 +145,44 @@ function extractFactTime(value) {
   return match ? match[1] : null;
 }
 
-async function locateDayContainer(page, date) {
-  const legacy = page.locator(
-    `#container_${date}`
-  );
-
-  try {
-    await legacy.waitFor({
-      state: "visible",
-      timeout: 8000,
-    });
-
-    return {
-      locator: legacy,
-      mode: "legacy",
-    };
-  } catch {}
-
-  const [, month, dayRaw] = date.split("-");
-  const day = String(Number(dayRaw));
-  const year = date.slice(0, 4);
-
-  const monthNames = {
-    "01": ["ENERO", "JANUARY"],
-    "02": ["FEBRERO", "FEBRUARY"],
-    "03": ["MARZO", "MARCH"],
-    "04": ["ABRIL", "APRIL"],
-    "05": ["MAYO", "MAY"],
-    "06": ["JUNIO", "JUNE"],
-    "07": ["JULIO", "JULY"],
-    "08": ["AGOSTO", "AUGUST"],
-    "09": ["SEPTIEMBRE", "SEPTEMBER"],
-    "10": ["OCTUBRE", "OCTOBER"],
-    "11": ["NOVIEMBRE", "NOVEMBER"],
-    "12": ["DICIEMBRE", "DECEMBER"],
-  }[month];
-
-  const result = await page.evaluate(
-    ({ day, year, monthNames }) => {
-      document
-        .querySelectorAll(
-          '[data-bilky-target-day="true"]'
-        )
-        .forEach((el) => {
-          el.removeAttribute(
-            "data-bilky-target-day"
-          );
-        });
-
-      const shiftLabels = [
-        ...document.querySelectorAll("body *"),
-      ].filter((el) => {
-        const t = (
-          el.textContent || ""
-        ).trim();
-
-        return (
-          t === "Primer turno" ||
-          t === "First shift"
-        );
-      });
-
-      const matches = [];
-
-      for (const label of shiftLabels) {
-        let el = label.parentElement;
-
-        for (
-          let depth = 0;
-          el && depth < 10;
-          depth += 1, el = el.parentElement
-        ) {
-          const text = (
-            el.innerText ||
-            el.textContent ||
-            ""
-          )
-            .replace(/\s+/g, " ")
-            .trim();
-
-          const hasYear =
-            text.includes(year);
-
-          const hasMonth =
-            monthNames.some((m) =>
-              text
-                .toUpperCase()
-                .includes(m)
-            );
-
-          const hasDay = new RegExp(
-            `(^|\\s)${day}(\\s|$)`
-          ).test(text);
-
-          const hasShift =
-            /Primer turno|First shift/.test(
-              text
-            );
-
-          if (
-            hasYear &&
-            hasMonth &&
-            hasDay &&
-            hasShift
-          ) {
-            matches.push(el);
-            break;
-          }
-        }
-      }
-
-      const unique = [
-        ...new Set(matches),
-      ];
-
-      if (unique.length !== 1) {
-        return {
-          count: unique.length,
-          samples: unique
-            .slice(0, 3)
-            .map((el) =>
-              (
-                el.innerText || ""
-              )
-                .replace(/\s+/g, " ")
-                .slice(0, 500)
-            ),
-        };
-      }
-
-      unique[0].setAttribute(
-        "data-bilky-target-day",
-        "true"
-      );
-
-      return {
-        count: 1,
-        samples: [
-          (
-            unique[0].innerText || ""
-          )
-            .replace(/\s+/g, " ")
-            .slice(0, 500),
-        ],
-      };
-    },
-    {
-      day,
-      year,
-      monthNames,
-    }
-  );
-
-  log(
-    `Fallback day-card matches=${result.count}`
-  );
-
-  if (result.samples?.length) {
-    log(
-      `Fallback sample: ${result.samples[0]}`
-    );
-  }
-
-  if (result.count !== 1) {
-    throw new Error(
-      `Unable to identify exactly one day card for ${date}; matches=${result.count}`
-    );
-  }
-
-  const locator = page.locator(
-    '[data-bilky-target-day="true"]'
-  );
-
-  await locator.waitFor({
-    state: "visible",
-    timeout: 5000,
-  });
-
-  return {
-    locator,
-    mode: "card",
-  };
-}
-
-async function readLegacyShiftCell(
-  cell
-) {
+async function readShiftCell(cell) {
   let planned = null;
 
-  const input = cell
-    .locator("input.clockpicker")
-    .first();
+  const input = cell.locator("input.clockpicker").first();
 
   if (await input.count()) {
-    planned =
-      await input.inputValue();
+    planned = await input.inputValue();
   } else {
-    planned = extractTime(
-      await cell.innerText()
-    );
+    planned = extractTime(await cell.innerText());
   }
 
   let fact = null;
   let factRaw = null;
 
   const factIcon = cell
-    .locator(
-      'i.fe-clock[data-original-title]'
-    )
+    .locator('i.fe-clock[data-original-title]')
     .first();
 
   if (await factIcon.count()) {
-    factRaw =
-      await factIcon.getAttribute(
-        "data-original-title"
-      );
-
-    fact = extractFactTime(
-      factRaw
-    );
+    factRaw = await factIcon.getAttribute("data-original-title");
+    fact = extractFactTime(factRaw);
   }
 
-  const clockButton = cell
-    .locator("a.clock")
-    .first();
-
-  const buttonExists =
-    (await clockButton.count()) > 0;
+  const clockButton = cell.locator("a.clock").first();
+  const buttonExists = (await clockButton.count()) > 0;
 
   let buttonEnabled = false;
   let buttonId = null;
 
   if (buttonExists) {
     const className =
-      (await clockButton.getAttribute(
-        "class"
-      )) || "";
+      (await clockButton.getAttribute("class")) || "";
 
     buttonEnabled =
-      !className
-        .split(/\s+/)
-        .includes("disabled");
+      !className.split(/\s+/).includes("disabled");
 
     buttonId =
-      await clockButton.getAttribute(
-        "id"
-      );
+      await clockButton.getAttribute("id");
   }
 
   return {
@@ -422,251 +195,65 @@ async function readLegacyShiftCell(
   };
 }
 
-async function readCardState(
-  container
-) {
-  const text = (
-    await container.innerText()
-  )
-    .replace(/\s+/g, " ")
-    .trim();
+async function readDayState(page, date) {
+  const containerSelector = `#container_${date}`;
+  const container = page.locator(containerSelector);
 
-  const times = [
-    ...text.matchAll(
-      /\b\d{2}:\d{2}(?::\d{2})?\b/g
-    ),
-  ].map((m) => m[0]);
+  await container.waitFor({
+    state: "visible",
+    timeout: 15000,
+  });
 
-  const plannedMorning =
-    times.find((t) =>
-      t.startsWith("08:00")
-    )
-      ? "08:00"
-      : null;
+  const row = container
+    .locator("tr")
+    .filter({ hasText: /First shift|Primer turno/ })
+    .first();
 
-  const plannedEvening =
-    times.find((t) =>
-      t.startsWith("16:00")
-    )
-      ? "16:00"
-      : null;
-
-  const factIcons =
-    container.locator(
-      'i.fe-clock[data-original-title], [data-original-title]'
+  if (!(await row.count())) {
+    throw new Error(
+      `First shift row not found for ${date}`
     );
-
-  const facts = [];
-
-  for (
-    let i = 0;
-    i < (await factIcons.count());
-    i += 1
-  ) {
-    const raw =
-      await factIcons
-        .nth(i)
-        .getAttribute(
-          "data-original-title"
-        );
-
-    const fact =
-      extractFactTime(raw);
-
-    if (fact) {
-      facts.push(fact);
-    }
   }
 
-  const ficharButtons =
-    container.getByText(
-      /^(Fichar|Clock in|Clock out)$/i,
-      {
-        exact: true,
-      }
+  const shiftCells =
+    row.locator("td.hr-container");
+
+  if ((await shiftCells.count()) < 2) {
+    throw new Error(
+      `Expected morning and evening cells for ${date}`
     );
+  }
 
-  const clockButtonCount =
-    await ficharButtons.count();
+  const morning =
+    await readShiftCell(shiftCells.nth(0));
 
-  const clockButton =
-    clockButtonCount === 1
-      ? ficharButtons.first()
-      : null;
-
-  const morningNeedsButton =
-    facts.length === 0 &&
-    clockButtonCount === 1;
-
-  const eveningNeedsButton =
-    facts.length === 1 &&
-    clockButtonCount === 1;
+  const evening =
+    await readShiftCell(shiftCells.nth(1));
 
   const signed =
-    /\bFirmado\b/i.test(text) ||
-    /\bSigned\b/i.test(text);
-
-  const pendingSignature =
-    /Pendiente de firmar/i.test(
-      text
-    ) ||
-    /Pending signature/i.test(
-      text
-    );
-
-  const signButton =
-    container.getByText(
-      /^(Firmar|Sign)$/i,
-      {
-        exact: true,
-      }
-    );
+    (await container
+      .locator(".badge-success")
+      .filter({ hasText: /Signed|Firmado/ })
+      .count()) > 0;
 
   const signAvailable =
-    (await signButton.count()) === 1;
+    (await container
+      .locator("button#sign")
+      .count()) > 0;
+
+  const text =
+    await container.innerText();
+
+  const pendingSignature =
+    /pending signature|pendiente de firmar/i.test(text);
 
   return {
-    morning: {
-      planned: plannedMorning,
-      fact: facts[0] || null,
-      buttonExists:
-        morningNeedsButton,
-      buttonEnabled:
-        morningNeedsButton,
-      buttonId:
-        morningNeedsButton
-          ? "text:Fichar"
-          : null,
-    },
-
-    evening: {
-      planned: plannedEvening,
-      fact: facts[1] || null,
-      buttonExists:
-        eveningNeedsButton,
-      buttonEnabled:
-        eveningNeedsButton,
-      buttonId:
-        eveningNeedsButton
-          ? "text:Fichar"
-          : null,
-    },
-
+    containerSelector,
+    morning,
+    evening,
     signed,
     signAvailable,
     pendingSignature,
-    clockButton,
-
-    signButton: signAvailable
-      ? signButton.first()
-      : null,
-  };
-}
-
-async function readDayState(
-  page,
-  date
-) {
-  const located =
-    await locateDayContainer(
-      page,
-      date
-    );
-
-  const container =
-    located.locator;
-
-  if (
-    located.mode === "legacy"
-  ) {
-    const row = container
-      .locator("tr")
-      .filter({
-        hasText:
-          /First shift|Primer turno/,
-      })
-      .first();
-
-    if (!(await row.count())) {
-      throw new Error(
-        `Shift row not found for ${date}`
-      );
-    }
-
-    const shiftCells =
-      row.locator(
-        "td.hr-container"
-      );
-
-    if (
-      (await shiftCells.count()) <
-      2
-    ) {
-      throw new Error(
-        `Expected morning and evening cells for ${date}`
-      );
-    }
-
-    const morning =
-      await readLegacyShiftCell(
-        shiftCells.nth(0)
-      );
-
-    const evening =
-      await readLegacyShiftCell(
-        shiftCells.nth(1)
-      );
-
-    const signed =
-      (await container
-        .locator(".badge-success")
-        .filter({
-          hasText:
-            /Signed|Firmado/,
-        })
-        .count()) > 0;
-
-    const signAvailable =
-      (await container
-        .locator("button#sign")
-        .count()) > 0;
-
-    const text =
-      await container.innerText();
-
-    const pendingSignature =
-      /pending signature|pendiente de firmar/i.test(
-        text
-      );
-
-    return {
-      container,
-      mode: "legacy",
-      morning,
-      evening,
-      signed,
-      signAvailable,
-      pendingSignature,
-      clockButton: null,
-
-      signButton:
-        signAvailable
-          ? container
-              .locator("button#sign")
-              .first()
-          : null,
-    };
-  }
-
-  const card =
-    await readCardState(
-      container
-    );
-
-  return {
-    container,
-    mode: "card",
-    ...card,
   };
 }
 
@@ -674,81 +261,40 @@ function printState(state) {
   log("----- DAY STATE -----");
 
   log(
-    `Mode=${state.mode}`
+    `Morning: plan=${state.morning.planned ?? "NONE"} ` +
+      `fact=${state.morning.fact ?? "NONE"} ` +
+      `button=${state.morning.buttonExists ? "YES" : "NO"} ` +
+      `enabled=${state.morning.buttonEnabled}`
   );
 
   log(
-    `Morning: plan=${
-      state.morning.planned ??
-      "NONE"
-    } fact=${
-      state.morning.fact ??
-      "NONE"
-    } button=${
-      state.morning
-        .buttonExists
-        ? "YES"
-        : "NO"
-    } enabled=${
-      state.morning
-        .buttonEnabled
-    }`
+    `Evening: plan=${state.evening.planned ?? "NONE"} ` +
+      `fact=${state.evening.fact ?? "NONE"} ` +
+      `button=${state.evening.buttonExists ? "YES" : "NO"} ` +
+      `enabled=${state.evening.buttonEnabled}`
   );
 
   log(
-    `Evening: plan=${
-      state.evening.planned ??
-      "NONE"
-    } fact=${
-      state.evening.fact ??
-      "NONE"
-    } button=${
-      state.evening
-        .buttonExists
-        ? "YES"
-        : "NO"
-    } enabled=${
-      state.evening
-        .buttonEnabled
-    }`
-  );
-
-  log(
-    `Signed=${
-      state.signed
-    } SignAvailable=${
-      state.signAvailable
-    } PendingSignature=${
-      state.pendingSignature
-    }`
+    `Signed=${state.signed} ` +
+      `SignAvailable=${state.signAvailable} ` +
+      `PendingSignature=${state.pendingSignature}`
   );
 
   log("---------------------");
 }
 
-async function loginAndOpenWorkshift(
-  page
-) {
+async function loginAndOpenWorkshift(page) {
   log("Opening Bilky login.");
 
-  await page.goto(
-    LOGIN_URL,
-    {
-      waitUntil:
-        "domcontentloaded",
-      timeout: 30000,
-    }
-  );
+  await page.goto(LOGIN_URL, {
+    waitUntil: "domcontentloaded",
+    timeout: 30000,
+  });
 
   const visibleInputs =
-    page.locator(
-      "input:visible"
-    );
+    page.locator("input:visible");
 
-  if (
-    (await visibleInputs.count()) <
-    2
-  ) {
+  if ((await visibleInputs.count()) < 2) {
     throw new Error(
       "Bilky login fields not found"
     );
@@ -759,17 +305,14 @@ async function loginAndOpenWorkshift(
     .fill(BILKY_NIF);
 
   await page
-    .locator(
-      'input[type="password"]'
-    )
+    .locator('input[type="password"]')
     .first()
     .fill(BILKY_PASSWORD);
 
-  const submit = page
-    .locator(
-      'button[type="submit"]'
-    )
-    .first();
+  const submit =
+    page
+      .locator('button[type="submit"]')
+      .first();
 
   if (!(await submit.count())) {
     throw new Error(
@@ -782,59 +325,33 @@ async function loginAndOpenWorkshift(
   const deadline =
     Date.now() + 25000;
 
-  while (
-    Date.now() < deadline
-  ) {
-    await page.waitForTimeout(
-      1000
-    );
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(1000);
 
-    if (
-      !page
-        .url()
-        .includes("/auth/login")
-    ) {
+    if (!page.url().includes("/auth/login")) {
       break;
     }
   }
 
-  if (
-    page
-      .url()
-      .includes("/auth/login")
-  ) {
+  if (page.url().includes("/auth/login")) {
     throw new Error(
       "Bilky security verification/login did not clear within 25 seconds"
     );
   }
 
-  log(
-    `Login OK. Current URL: ${page.url()}`
-  );
+  log(`Login OK. Current URL: ${page.url()}`);
 
-  await page.goto(
-    WORKSHIFT_URL,
-    {
-      waitUntil:
-        "domcontentloaded",
-      timeout: 30000,
-    }
-  );
+  await page.goto(WORKSHIFT_URL, {
+    waitUntil: "domcontentloaded",
+    timeout: 30000,
+  });
 
-  await page.waitForTimeout(
-    1500
-  );
+  await page.waitForTimeout(1200);
 
-  log(
-    `Workshift opened: ${page.url()}`
-  );
+  log(`Workshift opened: ${page.url()}`);
 }
 
-async function clock(
-  page,
-  state,
-  mode
-) {
+async function clock(page, state, mode) {
   const side =
     mode === "morning"
       ? state.morning
@@ -845,10 +362,7 @@ async function clock(
       ? "08:00"
       : "16:00";
 
-  if (
-    side.planned !==
-    expectedPlan
-  ) {
+  if (side.planned !== expectedPlan) {
     throw new Error(
       `${mode}: unexpected planned time ${side.planned}; expected ${expectedPlan}`
     );
@@ -865,6 +379,18 @@ async function clock(
     };
   }
 
+  if (!side.buttonExists) {
+    throw new Error(
+      `${mode}: Clock in/out button does not exist`
+    );
+  }
+
+  if (!side.buttonEnabled) {
+    throw new Error(
+      `${mode}: Clock in/out button is disabled`
+    );
+  }
+
   if (
     mode === "evening" &&
     !state.morning.fact
@@ -874,57 +400,28 @@ async function clock(
     );
   }
 
-  let button;
+  const container =
+    page.locator(state.containerSelector);
 
-  if (
-    state.mode ===
-    "legacy"
-  ) {
-    const row =
-      state.container
-        .locator("tr")
-        .filter({
-          hasText:
-            /First shift|Primer turno/,
-        })
-        .first();
+  const row = container
+    .locator("tr")
+    .filter({ hasText: /First shift|Primer turno/ })
+    .first();
 
-    const cells =
-      row.locator(
-        "td.hr-container"
-      );
+  const cells =
+    row.locator("td.hr-container");
 
-    const cell =
-      mode === "morning"
-        ? cells.nth(0)
-        : cells.nth(1);
+  const cell =
+    mode === "morning"
+      ? cells.nth(0)
+      : cells.nth(1);
 
-    button = cell
-      .locator("a.clock")
-      .first();
+  const button =
+    cell.locator("a.clock").first();
 
-    if (
-      !(await button.count())
-    ) {
-      throw new Error(
-        `${mode}: Clock in/out button does not exist`
-      );
-    }
-  } else {
-    if (
-      !side.buttonExists ||
-      !state.clockButton
-    ) {
-      throw new Error(
-        `${mode}: Fichar button is not uniquely available`
-      );
-    }
-
-    button =
-      state.clockButton;
-  }
-
-  log(`CLICK ${mode}`);
+  log(
+    `CLICK ${mode}: ${side.buttonId}`
+  );
 
   const responsePromise =
     page.waitForResponse(
@@ -937,9 +434,7 @@ async function clock(
         response
           .request()
           .method() === "POST",
-      {
-        timeout: 20000,
-      }
+      { timeout: 20000 }
     );
 
   await button.click();
@@ -957,19 +452,14 @@ async function clock(
     );
   }
 
-  await page.waitForTimeout(
-    1200
-  );
+  await page.waitForTimeout(1200);
 
   await page.reload({
-    waitUntil:
-      "domcontentloaded",
+    waitUntil: "domcontentloaded",
     timeout: 30000,
   });
 
-  await page.waitForTimeout(
-    1500
-  );
+  await page.waitForTimeout(1200);
 
   const newState =
     await readDayState(
@@ -1015,27 +505,24 @@ async function signDay(page) {
   }
 
   if (state.signed) {
-    log(
-      "Day already SIGNED/FIRMADO."
-    );
-
+    log("Day already SIGNED.");
     return state;
   }
 
-  if (
-    !state.signAvailable ||
-    !state.signButton
-  ) {
+  if (!state.signAvailable) {
     throw new Error(
-      "Evening completed but Sign/Firmar button is unavailable"
+      "Evening completed but Sign button is unavailable"
     );
   }
 
-  log(
-    "Clicking Sign/Firmar."
-  );
+  const signButton =
+    page
+      .locator(state.containerSelector)
+      .locator("button#sign");
 
-  await state.signButton.click();
+  log("Clicking Sign.");
+
+  await signButton.click();
 
   const confirmButton =
     page.locator(
@@ -1058,14 +545,10 @@ async function signDay(page) {
         response
           .request()
           .method() === "POST",
-      {
-        timeout: 20000,
-      }
+      { timeout: 20000 }
     );
 
-  log(
-    "Confirming Sign/Firmar."
-  );
+  log("Confirming Sign.");
 
   await confirmButton.click();
 
@@ -1082,19 +565,14 @@ async function signDay(page) {
     );
   }
 
-  await page.waitForTimeout(
-    1200
-  );
+  await page.waitForTimeout(1200);
 
   await page.reload({
-    waitUntil:
-      "domcontentloaded",
+    waitUntil: "domcontentloaded",
     timeout: 30000,
   });
 
-  await page.waitForTimeout(
-    1500
-  );
+  await page.waitForTimeout(1200);
 
   state =
     await readDayState(
@@ -1106,13 +584,11 @@ async function signDay(page) {
 
   if (!state.signed) {
     throw new Error(
-      "Sign POST succeeded but SIGNED/FIRMADO status was not confirmed after reload"
+      "Sign POST succeeded but SIGNED status was not confirmed after reload"
     );
   }
 
-  log(
-    "SIGNED/FIRMADO CONFIRMED."
-  );
+  log("SIGNED CONFIRMED.");
 
   return state;
 }
@@ -1120,9 +596,7 @@ async function signDay(page) {
 async function main() {
   fs.mkdirSync(
     "diagnostics",
-    {
-      recursive: true,
-    }
+    { recursive: true }
   );
 
   log(
@@ -1137,9 +611,7 @@ async function main() {
     `EXECUTE=${EXECUTE}`
   );
 
-  if (
-    EXECUTE !== "true"
-  ) {
+  if (EXECUTE !== "true") {
     throw new Error(
       "Execution blocked by internal kill switch: EXECUTE must equal true"
     );
@@ -1159,9 +631,7 @@ async function main() {
     (await context.newPage());
 
   try {
-    await loginAndOpenWorkshift(
-      page
-    );
+    await loginAndOpenWorkshift(page);
 
     let state =
       await readDayState(
@@ -1171,9 +641,7 @@ async function main() {
 
     printState(state);
 
-    if (
-      ACTION === "morning"
-    ) {
+    if (ACTION === "morning") {
       const result =
         await clock(
           page,
@@ -1182,16 +650,10 @@ async function main() {
         );
 
       await sendTelegram(
-        `✅ Bilky for ${CLIENT_NAME} ${displayDate(
-          targetDate
-        )}: Morning. Fact: ${shortFact(
-          result.fact
-        )}`
+        `✅ Bilky for ${CLIENT_NAME} ${displayDate(targetDate)}: Morning. Fact: ${shortFact(result.fact)}`
       );
 
-      log(
-        "MORNING SUCCESS"
-      );
+      log("MORNING SUCCESS");
 
       return;
     }
@@ -1214,21 +676,16 @@ async function main() {
 
     if (!duration) {
       throw new Error(
-        "Unable to calculate Workday from morning/evening facts"
+        "Unable to calculate DAY from morning/evening facts"
       );
     }
 
     await sendTelegram(
-      `✅ Bilky for ${CLIENT_NAME} ${displayDate(
-        targetDate
-      )}: Evening. Fact: ${shortFact(
-        result.fact
-      )}, Signed. Workday ${duration}`
+      `✅ Bilky for ${CLIENT_NAME} ${displayDate(targetDate)}: Evening. Fact: ${shortFact(result.fact)}, Signed. Workday ${duration}`
     );
 
-    log(
-      "EVENING SUCCESS"
-    );
+    log("EVENING SUCCESS");
+
   } catch (error) {
     console.error(
       `FAILED: ${error.message}`
@@ -1236,11 +693,12 @@ async function main() {
 
     try {
       await page.screenshot({
-        path:
-          "diagnostics/workshift-error.png",
+        path: "diagnostics/workshift-error.png",
         fullPage: true,
       });
-    } catch {}
+    } catch {
+      // Ignore screenshot failure
+    }
 
     const label =
       ACTION === "morning"
@@ -1249,19 +707,16 @@ async function main() {
 
     try {
       await sendTelegram(
-        `❌ Bilky for ${CLIENT_NAME} ${displayDate(
-          targetDate
-        )}: ${label}. ERROR: ${error.message}`
+        `❌ Bilky for ${CLIENT_NAME} ${displayDate(targetDate)}: ${label}. ERROR: ${error.message}`
       );
-    } catch (
-      telegramError
-    ) {
+    } catch (telegramError) {
       console.error(
         `Telegram error notification failed: ${telegramError.message}`
       );
     }
 
     throw error;
+
   } finally {
     await browser.close();
   }
