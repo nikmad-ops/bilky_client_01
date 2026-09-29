@@ -79,7 +79,7 @@ jobs:
           CLIENT_NAME: 'Alena'
           BILKY_NIF: ${{ secrets.BILKY_NIF }}
           BILKY_PASSWORD: ${{ secrets.BILKY_PASSWORD }}
-          BROWSERLESS_TOKEN: ${{ secrets.BROWSERLESS_TOKEN }}
+          AIRTOP_API_KEY: ${{ secrets.AIRTOP_API_KEY_ALENA }}
         run: npm run status
 
       - name: Telegram status
