@@ -8,7 +8,9 @@ export const TIMEZONE = "Europe/Madrid";
 
 const AIRTOP_SESSION_BUDGET_MS = 28000;
 const CAPTCHA_SOLVER_BUDGET_MS = 25000;
-const AIRTOP_PROFILE_NAME = "bilky-alena";
+const POST_LOGIN_STATE_TIMEOUT_MS = 8000;
+const FORENSIC_CAPTURE_BUDGET_MS = 1500;
+const AIRTOP_PROFILE_NAME = process.env.AIRTOP_PROFILE_NAME || "bilky-alena";
 
 export function log(message) {
   console.log(`[${new Date().toISOString()}] ${message}`);
@@ -90,6 +92,7 @@ export function createProductionClient({
   let context = null;
   let page = null;
   const captchaEvents = [];
+  const recentNetwork = [];
   let sessionReadyAt = 0;
   let sessionDeadline = 0;
   let captchaDetectedAt = 0;
@@ -173,6 +176,27 @@ export function createProductionClient({
 
     page = context.pages()[0] || (await context.newPage());
 
+    page.on("request", (request) => {
+      recentNetwork.push({
+        at: new Date().toISOString(),
+        kind: "request",
+        method: request.method(),
+        resourceType: request.resourceType(),
+        url: request.url(),
+      });
+      if (recentNetwork.length > 40) recentNetwork.splice(0, recentNetwork.length - 40);
+    });
+
+    page.on("response", (response) => {
+      recentNetwork.push({
+        at: new Date().toISOString(),
+        kind: "response",
+        status: response.status(),
+        url: response.url(),
+      });
+      if (recentNetwork.length > 40) recentNetwork.splice(0, recentNetwork.length - 40);
+    });
+
     page.setDefaultTimeout(10000);
     page.setDefaultNavigationTimeout(AIRTOP_SESSION_BUDGET_MS);
   }
@@ -222,10 +246,17 @@ export function createProductionClient({
     ]);
   }
 
+  function isDashboardUrl(url = page?.url() || "") {
+    return (
+      url.includes("/employee/dashboard/") ||
+      url.includes("/employee/control/panel")
+    );
+  }
+
   async function waitForState(date, timeoutMs = AIRTOP_SESSION_BUDGET_MS) {
     const container = page.locator(`#container_${date}`);
     const workshiftLink = page
-      .locator('a[href*="/employee/hour-registration/hour-registration/show/"]:visible')
+      .locator('a[href*="/employee/hour-registration/hour-registration/show/"]')
       .first();
 
     const deadline = Math.min(Date.now() + timeoutMs, sessionDeadline || Infinity);
@@ -240,7 +271,7 @@ export function createProductionClient({
         return "login";
       }
 
-      if (await workshiftLink.count()) {
+      if (isDashboardUrl() || (await workshiftLink.count())) {
         return "dashboard";
       }
 
@@ -250,33 +281,184 @@ export function createProductionClient({
     throw new Error(`Bilky state unresolved after navigation; url=${page.url()}`);
   }
 
-  async function waitAfterLogin(date, timeoutMs = AIRTOP_SESSION_BUDGET_MS) {
+  async function captureForensic(reason, date) {
+    if (!page) return;
+
+    const startedAt = Date.now();
+    const safe = async (operation, fallback = null) => {
+      try {
+        return await operation();
+      } catch {
+        return fallback;
+      }
+    };
+
+    const url = page.url();
+
+    const snapshot = await safe(
+      () =>
+        page.evaluate((targetDate) => {
+          const visible = (el) => {
+            if (!el) return false;
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return (
+              style.visibility !== "hidden" &&
+              style.display !== "none" &&
+              rect.width > 0 &&
+              rect.height > 0
+            );
+          };
+
+          const text = document.body?.innerText || "";
+          const html = document.documentElement?.outerHTML || "";
+          const clone = document.documentElement.cloneNode(true);
+
+          for (const input of clone.querySelectorAll("input")) {
+            input.removeAttribute("value");
+          }
+
+          for (const el of clone.querySelectorAll(
+            '[name*="password" i],[id*="password" i],[autocomplete="current-password"]'
+          )) {
+            el.removeAttribute("value");
+            el.textContent = "";
+          }
+
+          return {
+            title: document.title,
+            readyState: document.readyState,
+            fingerprint: {
+              url: location.href,
+              title: document.title,
+              readyState: document.readyState,
+              hasLoginTaxId: Boolean(document.querySelector("#taxid")),
+              hasLoginPassword: Boolean(document.querySelector("#password")),
+              visibleSubmitButtons: Array.from(
+                document.querySelectorAll('button[type="submit"]')
+              ).filter(visible).length,
+              workshiftLinks: document.querySelectorAll(
+                'a[href*="/employee/hour-registration/hour-registration/show/"]'
+              ).length,
+              visibleWorkshiftLinks: Array.from(
+                document.querySelectorAll(
+                  'a[href*="/employee/hour-registration/hour-registration/show/"]'
+                )
+              ).filter(visible).length,
+              hasDateContainer: Boolean(
+                document.querySelector(`#container_${targetDate}`)
+              ),
+              clockButtons: document.querySelectorAll("a.clock").length,
+              signButtons: document.querySelectorAll("button#sign").length,
+              successBadges: document.querySelectorAll(".badge-success").length,
+              challengeIndicators: {
+                challengeScript:
+                  /\/cdn-cgi\/challenge-platform\//i.test(html),
+                turnstile:
+                  Boolean(
+                    document.querySelector(
+                      '[name="cf-turnstile-response"], iframe[src*="turnstile"]'
+                    )
+                  ),
+                cfChallengeElement:
+                  Boolean(
+                    document.querySelector(
+                      '[id*="cf-chl"], [class*="cf-chl"], [data-cf-chl]'
+                    )
+                  ),
+                visibleChallengeText:
+                  /checking your browser|verify you are human|security verification|performing security verification/i.test(
+                    text
+                  ),
+              },
+              bodyTextSample: text.slice(0, 3000),
+            },
+            sanitizedDom: "<!doctype html>\n" + clone.outerHTML,
+          };
+        }, date),
+      null
+    );
+
+    const payload = {
+      capturedAt: new Date().toISOString(),
+      reason,
+      date,
+      url,
+      title: snapshot?.title || "",
+      readyState: snapshot?.readyState || "unknown",
+      captchaEvents,
+      fingerprint: snapshot?.fingerprint || null,
+      recentNetwork: recentNetwork.slice(-40),
+    };
+
+    fs.writeFileSync(
+      `${diagnosticsDir}/forensic-${reason}.json`,
+      JSON.stringify(payload, null, 2),
+      "utf8"
+    );
+
+    if (snapshot?.sanitizedDom) {
+      fs.writeFileSync(
+        `${diagnosticsDir}/forensic-${reason}.html`,
+        snapshot.sanitizedDom,
+        "utf8"
+      );
+    }
+
+    const remaining = Math.max(
+      0,
+      FORENSIC_CAPTURE_BUDGET_MS - (Date.now() - startedAt)
+    );
+
+    if (remaining >= 200) {
+      await safe(
+        () =>
+          page.screenshot({
+            path: `${diagnosticsDir}/forensic-${reason}.png`,
+            fullPage: false,
+            timeout: Math.min(500, remaining),
+          }),
+        null
+      );
+    }
+
+    log(
+      `Forensic snapshot finished: reason=${reason} durationMs=${
+        Date.now() - startedAt
+      }`
+    );
+  }
+
+  async function waitAfterLogin(
+    date,
+    timeoutMs = POST_LOGIN_STATE_TIMEOUT_MS
+  ) {
     const container = page.locator(`#container_${date}`);
     const workshiftLink = page
-      .locator('a[href*="/employee/hour-registration/hour-registration/show/"]:visible')
+      .locator('a[href*="/employee/hour-registration/hour-registration/show/"]')
       .first();
 
     const deadline = Math.min(Date.now() + timeoutMs, sessionDeadline || Infinity);
 
     while (Date.now() < deadline) {
       assertSessionBudget("waitAfterLogin");
+
       if (await container.isVisible().catch(() => false)) {
         return "workshift";
       }
 
-      if (await workshiftLink.count()) {
+      if (isDashboardUrl() || (await workshiftLink.count())) {
         return "dashboard";
       }
 
-      if (!page.url().includes("/auth/login")) {
-        await sleep(300);
-        continue;
-      }
-
-      await sleep(300);
+      await sleep(250);
     }
 
-    throw new Error(`Bilky remained on login page after submit; url=${page.url()}`);
+    await captureForensic("post-login-timeout", date);
+
+    throw new Error(
+      `Bilky post-login state unresolved after ${timeoutMs}ms; url=${page.url()}`
+    );
   }
 
   async function loginIfNeeded(date) {
@@ -347,11 +529,24 @@ export function createProductionClient({
 
     if (state === "dashboard") {
       const link = page
-        .locator('a[href*="/employee/hour-registration/hour-registration/show/"]:visible')
+        .locator('a[href*="/employee/hour-registration/hour-registration/show/"]')
         .first();
 
-      log("Dashboard detected; opening Workshift through visible navigation link.");
-      await link.evaluate((el) => el.click());
+      const href =
+        (await link.getAttribute("href").catch(() => null)) || WORKSHIFT_URL;
+
+      log(
+        `Dashboard detected; opening Workshift by authenticated URL. href=${href}`
+      );
+
+      await withinSessionBudget(
+        () =>
+          page.goto(href, {
+            waitUntil: "domcontentloaded",
+            timeout: Math.max(1000, remainingSessionMs()),
+          }),
+        "openWorkshift.dashboardGoto"
+      );
 
       state = await waitForState(date);
 
@@ -360,7 +555,7 @@ export function createProductionClient({
       }
 
       if (state === "dashboard") {
-        throw new Error("Bilky remained on dashboard after Workshift click");
+        throw new Error("Bilky remained on dashboard after Workshift navigation");
       }
 
       if (state === "workshift") {
