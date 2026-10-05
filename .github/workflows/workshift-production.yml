@@ -1,12 +1,7 @@
 name: Bilky Production
-run-name: Bilky ${{ github.event_name == 'push' && 'manual' || inputs.mode }} ${{ github.event_name == 'push' && 'morning' || inputs.action }} attempt ${{ github.event_name == 'push' && '1' || inputs.attempt }} ${{ github.event_name == 'push' && 'emergency-alena' || inputs.request_id }}
+run-name: Bilky ${{ inputs.mode }} ${{ inputs.action }} attempt ${{ inputs.attempt }} ${{ inputs.request_id }}
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'emergency-alena.trigger'
   workflow_dispatch:
     inputs:
       mode:
@@ -51,10 +46,10 @@ jobs:
       - name: Safety gate
         id: safety
         env:
-          MODE: ${{ github.event_name == 'push' && 'manual' || inputs.mode }}
-          ACTION: ${{ github.event_name == 'push' && 'morning' || inputs.action }}
-          ATTEMPT: ${{ github.event_name == 'push' && '1' || inputs.attempt }}
-          EXECUTE: ${{ github.event_name == 'push' && 'true' || inputs.execute }}
+          MODE: ${{ inputs.mode }}
+          ACTION: ${{ inputs.action }}
+          ATTEMPT: ${{ inputs.attempt }}
+          EXECUTE: ${{ inputs.execute }}
         shell: bash
         run: |
           set -euo pipefail
@@ -105,8 +100,8 @@ jobs:
       - name: Run Bilky workshift
         id: bilky
         env:
-          ACTION: ${{ github.event_name == 'push' && 'morning' || inputs.action }}
-          ATTEMPT: ${{ github.event_name == 'push' && '1' || inputs.attempt }}
+          ACTION: ${{ inputs.action }}
+          ATTEMPT: ${{ inputs.attempt }}
           EXECUTE: 'true'
           BILKY_NIF: ${{ secrets.BILKY_NIF }}
           BILKY_PASSWORD: ${{ secrets.BILKY_PASSWORD }}
@@ -137,7 +132,7 @@ jobs:
       - name: Telegram success
         if: success()
         env:
-          ACTION: ${{ github.event_name == 'push' && 'morning' || inputs.action }}
+          ACTION: ${{ inputs.action }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ADMIN_TELEGRAM_BOT_TOKEN: ${{ secrets.ADMIN_TELEGRAM_BOT_TOKEN }}
